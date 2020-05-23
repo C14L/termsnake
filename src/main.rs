@@ -5,7 +5,8 @@
 extern crate itertools;
 
 use itertools::join;
-use rand::Rng;
+use rand::{prelude::ThreadRng, Rng};
+
 use std::io::{stdout, Write};
 use std::time;
 
@@ -24,12 +25,16 @@ const FIELD_PIXELS: usize = (FIELD_XMAX * FIELD_YMAX);
 const PIXEL_EMPTY: u8 = b' ';
 const PIXEL_BORDER: u8 = b'#';
 const PIXEL_SNAKE: u8 = b'X';
+const PIXEL_FRUIT: u8 = b'O';
 const SNAKE_MIN_LEN: usize = 8;
 const SNAKE_MAX_LEN: usize = FIELD_PIXELS - 2 * FIELD_XMAX - 2 * (FIELD_YMAX - 2);
+const FRUITS_MAX: usize = 2;
+const FRUITS_MIN: usize = 2;
 
-type SnakePixel = Option<[usize; 2]>;
-
+type ObjectPixel = Option<[usize; 2]>;
 type PixelContent = Option<u8>;
+type Snake = [ObjectPixel; SNAKE_MAX_LEN];
+type Fruits = [ObjectPixel; FRUITS_MAX];
 
 #[derive(PartialEq)]
 enum SnakeOrientation {
@@ -45,11 +50,12 @@ fn main() -> Result<()> {
     let mut stdout = stdout();
 
     let mut field: [PixelContent; FIELD_PIXELS] = [None; FIELD_PIXELS];
-    let mut snake: [SnakePixel; SNAKE_MAX_LEN] = [None; SNAKE_MAX_LEN];
+    let mut fruits: Fruits = [None; FRUITS_MAX];
+    let mut snake: Snake = [None; SNAKE_MAX_LEN];
     let mut snake_orientation: SnakeOrientation = SnakeOrientation::East;
     let mut snake_speed: usize = 1;
     let mut snake_crashed: bool = false;
-    let mut snake_drop_tail: SnakePixel = None; // Tail to remove, to avoid complete re-render
+    let mut snake_drop_tail: ObjectPixel = None; // Tail to remove, to avoid complete re-render
 
     let speed_increase_count: usize = 0;
     let speed_increase_amount: usize = 10;
@@ -57,6 +63,7 @@ fn main() -> Result<()> {
     let mut grow_snake: bool;
 
     let mut is_paused: bool = false;
+    let mut score: usize = 0;
 
     // Init snake
 
@@ -73,6 +80,12 @@ fn main() -> Result<()> {
     for x in 0..FIELD_XMAX {
         field[x + 0 * FIELD_XMAX] = Some(PIXEL_BORDER);
         field[x + (FIELD_YMAX - 1) * FIELD_XMAX] = Some(PIXEL_BORDER);
+    }
+
+    // Init fruits
+
+    for i in 0..FRUITS_MAX {
+        fruits[i] = get_random_fruit(&mut rng, &snake);
     }
 
     // Init terminal
@@ -124,6 +137,7 @@ fn main() -> Result<()> {
         }
 
         // Move snake
+
         for si in (1..SNAKE_MAX_LEN).rev() {
             match snake[si - 1] {
                 Some(p) => {
@@ -171,6 +185,34 @@ fn main() -> Result<()> {
             None => {}
         }
 
+        // Check snake eats fruit
+
+        match snake[0] {
+            Some([sx, sy]) => {
+                for i in 0..fruits.len() {
+                    match fruits[i] {
+                        Some([fx, fy]) => {
+                            if fx == sx && fy == sy {
+                                score += 10;
+                                fruits[i] = get_random_fruit(&mut rng, &snake);
+                            }
+                        }
+                        None => {}
+                    }
+                }
+            }
+            None => {}
+        }
+
+        // Add fruits  to field
+
+        for i in 0..fruits.len() {
+            match fruits[i] {
+                Some([fx, fy]) => field[fx + fy * FIELD_XMAX] = Some(PIXEL_FRUIT),
+                None => {}
+            }
+        }
+
         // Add snake to field
 
         for si in 0..snake.len() {
@@ -202,7 +244,13 @@ fn main() -> Result<()> {
             }
         }
 
-        stdout.flush()?;
+        stdout
+            .execute(cursor::MoveTo(
+                FIELD_XMARGIN as u16 + 3,
+                FIELD_YMARGIN as u16 + 0,
+            ))?
+            .execute(Print(format!("[{}]", score)))?
+            .flush()?;
     }
 
     if snake_crashed {
@@ -216,10 +264,42 @@ fn main() -> Result<()> {
             .execute(SetForegroundColor(Color::Black))?
             .execute(cursor::MoveTo(x, y))?
             .execute(Print(format!("{}{}{}", spc, msg, spc)))?
-            .execute(cursor::MoveTo(0, (FIELD_YMARGIN + FIELD_YMAX + 1) as u16))?
             .flush()?;
     }
 
+    stdout
+        .execute(cursor::MoveTo(0, (FIELD_YMARGIN + FIELD_YMAX + 1) as u16))?
+        .flush()?;
+
     let _ = terminal::disable_raw_mode()?;
     Ok(())
+}
+
+fn get_random_fruit(rng: &mut ThreadRng, snake: &Snake) -> ObjectPixel {
+    let mut x: usize;
+    let mut y: usize;
+    loop {
+        x = rng.gen_range(0, FIELD_XMAX);
+        y = rng.gen_range(0, FIELD_YMAX);
+
+        // not on the field border
+        if x == 0 || x == FIELD_XMAX - 1 || y == 0 || y == FIELD_YMAX - 1 {
+            continue;
+        }
+
+        // not on the snake
+        for si in 0..snake.len() {
+            match snake[si] {
+                Some([sx, sy]) => {
+                    if sx == x || sy == y {
+                        continue;
+                    }
+                }
+                None => {}
+            }
+        }
+
+        // all okay
+        return Some([x, y]);
+    }
 }
