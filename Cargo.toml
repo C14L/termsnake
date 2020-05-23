@@ -5,8 +5,9 @@ authors = ["Christian Steimel <me@C14L.com>"]
 edition = "2018"
 
 [dependencies]
-crossterm = "0.17.4"
-rand = "0.7.3"
+crossterm = "0.17"
+rand = "0.7"
+itertools = '0.9'
 
 # Optimize resulting binary for size:
 [profile.release]
@@ -14,4 +15,3 @@ rand = "0.7.3"
 lto = true  # Enable Link Time Optimization (LTO)
 codegen-units = 1  # Use only one codegen unit to build for some extra optimizations
 panic = 'abort'  # Remove stack trace on panic to safe size
-

@@ -2,10 +2,11 @@
 #![allow(unused_variables)]
 #![allow(unused_mut)]
 
+extern crate itertools;
+
+use itertools::join;
 use rand::Rng;
 use std::io::{stdout, Write};
-use std::process::exit;
-use std::thread;
 use std::time;
 
 use crossterm::{
@@ -15,17 +16,22 @@ use crossterm::{
     terminal, ExecutableCommand, Result,
 };
 
-const FIELD_XMARGIN: usize = 4;
-const FIELD_YMARGIN: usize = 2;
-const FIELD_XMAX: usize = 40;
+const FIELD_XMARGIN: usize = 2;
+const FIELD_YMARGIN: usize = 1;
+const FIELD_XMAX: usize = 30;
 const FIELD_YMAX: usize = 20;
 const FIELD_PIXELS: usize = (FIELD_XMAX * FIELD_YMAX);
+const PIXEL_EMPTY: u8 = b' ';
 const PIXEL_BORDER: u8 = b'#';
-const SNAKE_MIN_LEN: usize = 4;
+const PIXEL_SNAKE: u8 = b'X';
+const SNAKE_MIN_LEN: usize = 8;
 const SNAKE_MAX_LEN: usize = FIELD_PIXELS - 2 * FIELD_XMAX - 2 * (FIELD_YMAX - 2);
 
 type SnakePixel = Option<[usize; 2]>;
 
+type PixelContent = Option<u8>;
+
+#[derive(PartialEq)]
 enum SnakeOrientation {
     North,
     East,
@@ -38,17 +44,19 @@ fn main() -> Result<()> {
     let mut rng = rand::thread_rng();
     let mut stdout = stdout();
 
-    let mut field: [u8; FIELD_PIXELS] = [0; FIELD_PIXELS];
+    let mut field: [PixelContent; FIELD_PIXELS] = [None; FIELD_PIXELS];
     let mut snake: [SnakePixel; SNAKE_MAX_LEN] = [None; SNAKE_MAX_LEN];
     let mut snake_orientation: SnakeOrientation = SnakeOrientation::East;
-    let mut snake_speed: usize = 0;
+    let mut snake_speed: usize = 1;
     let mut snake_crashed: bool = false;
+    let mut snake_drop_tail: SnakePixel = None; // Tail to remove, to avoid complete re-render
 
-    let game_tick = time::Duration::from_millis(50);
-    let tick_threshold: usize = 5;
-    let mut tick_count: usize = 0;
+    let speed_increase_count: usize = 0;
+    let speed_increase_amount: usize = 10;
+    let mut game_tick = time::Duration::from_millis(250);
     let mut grow_snake: bool;
-    let mut move_snake: bool;
+
+    let mut is_paused: bool = false;
 
     // Init snake
 
@@ -59,12 +67,12 @@ fn main() -> Result<()> {
     // Init field
 
     for y in 0..FIELD_YMAX {
-        field[0 + y * FIELD_XMAX] = PIXEL_BORDER;
-        field[FIELD_XMAX - 1 + y * FIELD_XMAX] = PIXEL_BORDER;
+        field[0 + y * FIELD_XMAX] = Some(PIXEL_BORDER);
+        field[FIELD_XMAX - 1 + y * FIELD_XMAX] = Some(PIXEL_BORDER);
     }
     for x in 0..FIELD_XMAX {
-        field[x + 0 * FIELD_XMAX] = PIXEL_BORDER;
-        field[x + (FIELD_YMAX - 1) * FIELD_XMAX] = PIXEL_BORDER;
+        field[x + 0 * FIELD_XMAX] = Some(PIXEL_BORDER);
+        field[x + (FIELD_YMAX - 1) * FIELD_XMAX] = Some(PIXEL_BORDER);
     }
 
     // Init terminal
@@ -75,51 +83,141 @@ fn main() -> Result<()> {
         .execute(SetForegroundColor(Color::White))?
         .flush()?;
 
-    // Game loop ...
+    // Game loop
 
-    while !snake_crashed {
-        tick_count += 1;
-        move_snake = tick_count == tick_threshold;
-
+    'outer: while !snake_crashed {
         // Read user input
 
         if poll(game_tick)? {
             let event = read()?;
 
             if event == Event::Key(KeyCode::Esc.into()) {
-                let _ = terminal::disable_raw_mode()?;
-                exit(0x0);
+                break 'outer;
+            }
+            if event == Event::Key(KeyCode::Char('p').into()) {
+                is_paused = !is_paused;
+            }
+            if event == Event::Key(KeyCode::Up.into()) {
+                if snake_orientation != SnakeOrientation::South {
+                    snake_orientation = SnakeOrientation::North;
+                }
+            }
+            if event == Event::Key(KeyCode::Right.into()) {
+                if snake_orientation != SnakeOrientation::West {
+                    snake_orientation = SnakeOrientation::East;
+                }
+            }
+            if event == Event::Key(KeyCode::Down.into()) {
+                if snake_orientation != SnakeOrientation::North {
+                    snake_orientation = SnakeOrientation::South;
+                }
+            }
+            if event == Event::Key(KeyCode::Left.into()) {
+                if snake_orientation != SnakeOrientation::East {
+                    snake_orientation = SnakeOrientation::West;
+                }
             }
         }
 
-        // Move snake
+        if is_paused {
+            continue;
+        }
 
-        if move_snake {}
+        // Move snake
+        for si in (1..SNAKE_MAX_LEN).rev() {
+            match snake[si - 1] {
+                Some(p) => {
+                    if snake[si].is_some() {
+                        snake[si] = Some(p);
+                    } else {
+                        snake_drop_tail = Some(p);
+                    }
+                }
+                None => {}
+            }
+        }
+        let mut sx = snake[0].expect("Missing snake pixel")[0];
+        let mut sy = snake[0].expect("Missing snake pixel")[1];
+        match snake_orientation {
+            SnakeOrientation::North => sy -= 1,
+            SnakeOrientation::East => sx += 1,
+            SnakeOrientation::South => sy += 1,
+            SnakeOrientation::West => sx -= 1,
+        }
+        snake[0] = Some([sx, sy]);
+
+        // Check colission
+
+        match snake[0] {
+            Some([shx, shy]) => {
+                // Wall colission
+                if shx == 0 || shx == FIELD_XMAX - 1 || shy == 0 || shy == FIELD_YMAX - 1 {
+                    snake_crashed = true;
+                    break 'outer;
+                }
+                // Self colission
+                for si in 1..snake.len() {
+                    match snake[si] {
+                        Some([tx, ty]) => {
+                            if shx == tx && shy == ty {
+                                snake_crashed = true;
+                                break 'outer;
+                            }
+                        }
+                        None => {}
+                    }
+                }
+            }
+            None => {}
+        }
 
         // Add snake to field
 
         for si in 0..snake.len() {
             match snake[si] {
-                Some([sx, sy]) => field[sx + sy * FIELD_XMAX] = b'X',
+                Some([sx, sy]) => field[sx + sy * FIELD_XMAX] = Some(PIXEL_SNAKE),
                 None => {}
             }
+        }
+        match snake_drop_tail {
+            Some([sx, sy]) => field[sx + sy * FIELD_XMAX] = Some(PIXEL_EMPTY),
+            None => {}
         }
 
         // Render field
 
         for fx in 0..FIELD_XMAX {
             for fy in 0..FIELD_YMAX {
-                let i = fx + fy * FIELD_XMAX;
-                stdout
-                    .execute(cursor::MoveTo(
-                        (fx + FIELD_XMARGIN) as u16,
-                        (fy + FIELD_YMARGIN) as u16,
-                    ))?
-                    .execute(Print(field[i] as char))?;
+                let fi = fx + fy * FIELD_XMAX;
+                match field[fi] {
+                    Some(content) => {
+                        let tx = (fx + FIELD_XMARGIN) as u16;
+                        let ty = (fy + FIELD_YMARGIN) as u16;
+                        stdout
+                            .execute(cursor::MoveTo(tx, ty))?
+                            .execute(Print(content as char))?;
+                    }
+                    None => {}
+                }
             }
         }
 
         stdout.flush()?;
+    }
+
+    if snake_crashed {
+        let msg = "Snake crashed!";
+        let spc_len = (FIELD_XMAX - msg.len()) / 2;
+        let spc = join((0..spc_len).map(|_| " "), "");
+        let x = (FIELD_XMARGIN) as u16;
+        let y = (FIELD_YMARGIN + (FIELD_YMAX / 2)) as u16;
+        stdout
+            .execute(SetBackgroundColor(Color::White))?
+            .execute(SetForegroundColor(Color::Black))?
+            .execute(cursor::MoveTo(x, y))?
+            .execute(Print(format!("{}{}{}", spc, msg, spc)))?
+            .execute(cursor::MoveTo(0, (FIELD_YMARGIN + FIELD_YMAX + 1) as u16))?
+            .flush()?;
     }
 
     let _ = terminal::disable_raw_mode()?;
