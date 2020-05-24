@@ -56,14 +56,13 @@ fn main() -> Result<()> {
     let mut snake_speed: usize = 1;
     let mut snake_crashed: bool = false;
     let mut snake_drop_tail: ObjectPixel = None; // Tail to remove, to avoid complete re-render
-
-    let speed_increase_count: usize = 0;
-    let speed_increase_amount: usize = 10;
-    let mut game_tick = time::Duration::from_millis(250);
-    let mut grow_snake: bool;
-
+    let snake_speed_amount: usize = 10;
+    let mut snake_speed: usize = 250;
+    let mut tick_counter: usize = 0;
+    let mut game_tick: time::Duration;
     let mut is_paused: bool = false;
     let mut score: usize = 0;
+    let mut grow_snake: bool;
 
     // Init snake
 
@@ -99,6 +98,12 @@ fn main() -> Result<()> {
     // Game loop
 
     'outer: while !snake_crashed {
+        game_tick = time::Duration::from_millis(snake_speed as u64);
+        tick_counter += 1;
+
+        // Grow snake
+        grow_snake = tick_counter % 50 == 0;
+
         // Read user input
 
         if poll(game_tick)? {
@@ -144,12 +149,17 @@ fn main() -> Result<()> {
                     if snake[si].is_some() {
                         snake[si] = Some(p);
                     } else {
-                        snake_drop_tail = Some(p);
+                        if grow_snake {
+                            snake[si] = Some(p);
+                        } else {
+                            snake_drop_tail = Some(p);
+                        }
                     }
                 }
                 None => {}
             }
         }
+
         let mut sx = snake[0].expect("Missing snake pixel")[0];
         let mut sy = snake[0].expect("Missing snake pixel")[1];
         match snake_orientation {
@@ -170,7 +180,7 @@ fn main() -> Result<()> {
                     break 'outer;
                 }
                 // Self colission
-                for si in 1..snake.len() {
+                for si in 1..get_snake_len(&snake) {
                     match snake[si] {
                         Some([tx, ty]) => {
                             if shx == tx && shy == ty {
@@ -195,6 +205,9 @@ fn main() -> Result<()> {
                             if fx == sx && fy == sy {
                                 score += 10;
                                 fruits[i] = get_random_fruit(&mut rng, &snake);
+                                if score % 30 == 0 && snake_speed > 10 {
+                                    snake_speed -= 5;
+                                }
                             }
                         }
                         None => {}
@@ -204,7 +217,7 @@ fn main() -> Result<()> {
             None => {}
         }
 
-        // Add fruits  to field
+        // Add fruits to field
 
         for i in 0..fruits.len() {
             match fruits[i] {
@@ -215,14 +228,18 @@ fn main() -> Result<()> {
 
         // Add snake to field
 
-        for si in 0..snake.len() {
+        for si in 0..get_snake_len(&snake) {
             match snake[si] {
                 Some([sx, sy]) => field[sx + sy * FIELD_XMAX] = Some(PIXEL_SNAKE),
                 None => {}
             }
         }
+
         match snake_drop_tail {
-            Some([sx, sy]) => field[sx + sy * FIELD_XMAX] = Some(PIXEL_EMPTY),
+            Some([sx, sy]) => {
+                field[sx + sy * FIELD_XMAX] = Some(PIXEL_EMPTY);
+                snake_drop_tail = None;
+            }
             None => {}
         }
 
@@ -246,10 +263,20 @@ fn main() -> Result<()> {
 
         stdout
             .execute(cursor::MoveTo(
-                FIELD_XMARGIN as u16 + 3,
-                FIELD_YMARGIN as u16 + 0,
+                (FIELD_XMARGIN + FIELD_XMAX + FIELD_XMARGIN) as u16,
+                (FIELD_YMARGIN + FIELD_YMARGIN + 0) as u16,
             ))?
-            .execute(Print(format!("[{}]", score)))?
+            .execute(Print(format!("SCORE: {}", score)))?
+            .execute(cursor::MoveTo(
+                (FIELD_XMARGIN + FIELD_XMAX + FIELD_XMARGIN) as u16,
+                (FIELD_YMARGIN + FIELD_YMARGIN + 2) as u16,
+            ))?
+            .execute(Print(format!("LENGTH: {}", get_snake_len(&snake))))?
+            .execute(cursor::MoveTo(
+                (FIELD_XMARGIN + FIELD_XMAX + FIELD_XMARGIN) as u16,
+                (FIELD_YMARGIN + FIELD_YMARGIN + 4) as u16,
+            ))?
+            .execute(Print(format!("SPEED: {}", snake_speed)))?
             .flush()?;
     }
 
@@ -273,6 +300,15 @@ fn main() -> Result<()> {
 
     let _ = terminal::disable_raw_mode()?;
     Ok(())
+}
+
+fn get_snake_len(snake: &Snake) -> usize {
+    for si in 0..SNAKE_MAX_LEN {
+        if snake[si].is_none() {
+            return si;
+        }
+    }
+    0
 }
 
 fn get_random_fruit(rng: &mut ThreadRng, snake: &Snake) -> ObjectPixel {
