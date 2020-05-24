@@ -1,15 +1,9 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_mut)]
-
 extern crate itertools;
 
 use itertools::join;
 use rand::{prelude::ThreadRng, Rng};
-
 use std::io::{stdout, Write};
 use std::time;
-
 use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
@@ -29,7 +23,6 @@ const PIXEL_FRUIT: u8 = b'O';
 const SNAKE_MIN_LEN: usize = 8;
 const SNAKE_MAX_LEN: usize = FIELD_PIXELS - 2 * FIELD_XMAX - 2 * (FIELD_YMAX - 2);
 const FRUITS_MAX: usize = 2;
-const FRUITS_MIN: usize = 2;
 
 type ObjectPixel = Option<[usize; 2]>;
 type PixelContent = Option<u8>;
@@ -53,10 +46,8 @@ fn main() -> Result<()> {
     let mut fruits: Fruits = [None; FRUITS_MAX];
     let mut snake: Snake = [None; SNAKE_MAX_LEN];
     let mut snake_orientation: SnakeOrientation = SnakeOrientation::East;
-    let mut snake_speed: usize = 1;
     let mut snake_crashed: bool = false;
-    let mut snake_drop_tail: ObjectPixel = None; // Tail to remove, to avoid complete re-render
-    let snake_speed_amount: usize = 10;
+    let mut snake_drop_tail: ObjectPixel = None; // remove tail, to avoid re-render
     let mut snake_speed: usize = 250;
     let mut tick_counter: usize = 0;
     let mut game_tick: time::Duration;
